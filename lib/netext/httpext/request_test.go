@@ -395,6 +395,7 @@ func TestHTTPErrorDataMetadata(t *testing.T) {
 	}
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, nil)
 	req.Header.Set("Authorization", "Bearer secret")
+	req.Proto = "" // as k6 builds requests: the transport picks the protocol
 	preq := &ParsedHTTPRequest{
 		Req:              req,
 		URL:              &URL{u: req.URL, URL: srv.URL},

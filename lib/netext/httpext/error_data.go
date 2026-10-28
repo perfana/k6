@@ -34,7 +34,13 @@ func errorMetadata(
 	if m == nil {
 		m = make(map[string]string, 4)
 	}
-	m[MetadataErrorReqHeaders] = req.Method + " " + reqURL + " " + req.Proto + formatHeader(req.Header)
+	// k6 leaves req.Proto empty and lets the transport pick the protocol, so the
+	// response is the only record of what was actually spoken.
+	proto := "HTTP/1.1"
+	if res != nil && res.Proto != "" {
+		proto = res.Proto
+	}
+	m[MetadataErrorReqHeaders] = req.Method + " " + reqURL + " " + proto + formatHeader(req.Header)
 	if res != nil {
 		m[MetadataErrorResHeaders] = res.Proto + " " + res.Status + formatHeader(res.Header)
 	}
