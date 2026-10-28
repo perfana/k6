@@ -274,6 +274,14 @@ type Options struct {
 	// Should all HTTP requests and responses be logged (excluding body)?
 	HTTPDebug null.String `json:"httpDebug" envconfig:"K6_HTTP_DEBUG"`
 
+	// Include request/response headers and bodies in the metadata of failed
+	// http_req_failed samples, see the httpext.MetadataError* keys.
+	HTTPErrorData null.Bool `json:"httpErrorData" envconfig:"K6_HTTP_ERROR_DATA"`
+
+	// Carry the request URL in sample metadata when a manually set `name` tag has
+	// replaced it in the indexed `url` tag, so outputs can still see it.
+	HTTPRequestURL null.Bool `json:"httpRequestUrl" envconfig:"K6_HTTP_REQUEST_URL"`
+
 	// Accept invalid or untrusted TLS certificates.
 	InsecureSkipTLSVerify null.Bool `json:"insecureSkipTLSVerify" envconfig:"K6_INSECURE_SKIP_TLS_VERIFY"`
 
@@ -442,6 +450,12 @@ func (o Options) Apply(opts Options) Options {
 	}
 	if opts.HTTPDebug.Valid {
 		o.HTTPDebug = opts.HTTPDebug
+	}
+	if opts.HTTPErrorData.Valid {
+		o.HTTPErrorData = opts.HTTPErrorData
+	}
+	if opts.HTTPRequestURL.Valid {
+		o.HTTPRequestURL = opts.HTTPRequestURL
 	}
 	if opts.InsecureSkipTLSVerify.Valid {
 		o.InsecureSkipTLSVerify = opts.InsecureSkipTLSVerify

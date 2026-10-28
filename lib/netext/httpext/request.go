@@ -286,6 +286,10 @@ func MakeRequest(ctx context.Context, state *lib.State, preq *ParsedHTTPRequest)
 			resErr = NewK6Error(requestTimeoutErrorCode, requestTimeoutErrorCodeMsg, resErr)
 		}
 	}
+	if state.Options.HTTPErrorData.Bool {
+		tracerTransport.errorReqBody = respReq.Body
+		tracerTransport.errorResBody = responseBodyString(resp.Body)
+	}
 	finishedReq := tracerTransport.processLastSavedRequest(wrapDecompressionError(resErr))
 	if finishedReq != nil {
 		updateK6Response(resp, finishedReq)

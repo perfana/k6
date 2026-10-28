@@ -15,6 +15,11 @@ import (
 	"go.k6.io/k6/v2/metrics"
 )
 
+// MetadataRequestURL is the sample metadata key holding the URL of a request
+// whose `url` tag was replaced by a manually set `name` tag. Written only when
+// the HTTPRequestURL option is enabled.
+const MetadataRequestURL = "request_url"
+
 // transport is an implementation of http.RoundTripper that will measure and emit
 // different metrics for each roundtrip
 type transport struct {
@@ -25,6 +30,10 @@ type transport struct {
 
 	lastRequest     *unfinishedRequest
 	lastRequestLock *sync.Mutex
+
+	// The bodies of the last request, set by MakeRequest when HTTPErrorData is
+	// enabled. The round trip itself never sees them.
+	errorReqBody, errorResBody string
 }
 
 // unfinishedRequest stores the request and the raw result returned from the
@@ -98,6 +107,15 @@ func (t *transport) measureAndEmitMetrics(unfReq *unfinishedRequest) *finishedRe
 		// whatever they set as the value of the `url` tags too, to prevent
 		// high-cardinality values in the indexed tags.
 		tagsAndMeta.SetSystemTagOrMetaIfEnabled(enabledTags, metrics.TagURL, nameTagValue)
+
+		// That overwrite loses the URL: nothing else in the metric stream carries
+		// it, so an output cannot report which URL a named request actually hit.
+		// Metadata is where it can be kept without paying the cardinality cost the
+		// overwrite exists to avoid - it is not indexed in atlas. Only set here,
+		// because in the branch above the `url` tag already holds the real URL.
+		if t.state.Options.HTTPRequestURL.Bool {
+			tagsAndMeta.SetMetadata(MetadataRequestURL, cleanURL)
+		}
 	}
 
 	tagsAndMeta.SetSystemTagOrMetaIfEnabled(enabledTags, metrics.TagMethod, unfReq.request.Method)
@@ -147,17 +165,20 @@ func (t *transport) measureAndEmitMetrics(unfReq *unfinishedRequest) *finishedRe
 		if failed == 1 {
 			trail.Failed.Bool = true
 		}
-		trail.Samples = append(trail.Samples,
-			metrics.Sample{
-				TimeSeries: metrics.TimeSeries{
-					Metric: t.state.BuiltinMetrics.HTTPReqFailed,
-					Tags:   tagsAndMeta.Tags,
-				},
-				Time:     trail.EndTime,
-				Metadata: tagsAndMeta.Metadata,
-				Value:    failed,
+		failedSample := metrics.Sample{
+			TimeSeries: metrics.TimeSeries{
+				Metric: t.state.BuiltinMetrics.HTTPReqFailed,
+				Tags:   tagsAndMeta.Tags,
 			},
-		)
+			Time:     trail.EndTime,
+			Metadata: tagsAndMeta.Metadata,
+			Value:    failed,
+		}
+		if failed == 1 && t.state.Options.HTTPErrorData.Bool {
+			failedSample.Metadata = errorMetadata(tagsAndMeta.Metadata, unfReq.request, unfReq.response,
+				cleanURL, t.errorReqBody, t.errorResBody)
+		}
+		trail.Samples = append(trail.Samples, failedSample)
 	}
 	metrics.PushIfNotDone(t.ctx, t.state.Samples, trail)
 	return result

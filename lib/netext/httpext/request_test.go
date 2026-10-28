@@ -10,9 +10,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mccutchen/go-httpbin/v2/httpbin"
 	"github.com/sirupsen/logrus"
@@ -365,6 +367,67 @@ func TestTrailFailed(t *testing.T) {
 			require.Equal(t, failed, httpReqFailedSampleValue)
 		})
 	}
+}
+
+func TestHTTPErrorDataMetadata(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Set-Cookie", "session=secret")
+		w.Header().Set("X-Trace", "abc")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	t.Cleanup(srv.Close)
+
+	samples := make(chan metrics.SampleContainer, 10)
+	registry := metrics.NewRegistry()
+	state := &lib.State{
+		Options: lib.Options{
+			SystemTags:    &metrics.DefaultSystemTagSet,
+			HTTPErrorData: null.BoolFrom(true),
+		},
+		Transport:      srv.Client().Transport,
+		Samples:        samples,
+		Logger:         logrus.New(),
+		BufferPool:     lib.NewBufferPool(),
+		BuiltinMetrics: metrics.RegisterBuiltinMetrics(registry),
+		Tags:           lib.NewVUStateTags(registry.RootTagSet()),
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	preq := &ParsedHTTPRequest{
+		Req:              req,
+		URL:              &URL{u: req.URL, URL: srv.URL},
+		Body:             bytes.NewBufferString("payload"),
+		Timeout:          10 * time.Second,
+		ResponseCallback: func(status int) bool { return status < 400 },
+		TagsAndMeta:      state.Tags.GetCurrentValues(),
+	}
+	_, err := MakeRequest(t.Context(), state, preq)
+	require.NoError(t, err)
+
+	trail, ok := (<-samples).(*Trail)
+	require.True(t, ok)
+	var meta map[string]string
+	for _, s := range trail.Samples {
+		if s.Metric.Name == metrics.HTTPReqFailedName {
+			meta = s.Metadata
+		} else {
+			assert.NotContains(t, s.Metadata, MetadataErrorReqHeaders, "only http_req_failed carries error data")
+		}
+	}
+	assert.Equal(t, "payload", meta[MetadataErrorReqBody])
+	assert.Equal(t, "boom", meta[MetadataErrorResBody])
+	assert.Contains(t, meta[MetadataErrorReqHeaders], "POST "+srv.URL+" HTTP/1.1\n")
+	assert.Contains(t, meta[MetadataErrorReqHeaders], "Authorization: [redacted]")
+	assert.Contains(t, meta[MetadataErrorResHeaders], "HTTP/1.1 500 Internal Server Error\n")
+	assert.Contains(t, meta[MetadataErrorResHeaders], "Set-Cookie: [redacted]")
+	assert.Contains(t, meta[MetadataErrorResHeaders], "X-Trace: abc")
+	assert.NotContains(t, meta[MetadataErrorReqHeaders]+meta[MetadataErrorResHeaders], "secret")
+
+	long := strings.Repeat("é", maxErrorBodyLen) // 2 bytes per rune, so the cut lands mid-rune
+	assert.True(t, utf8.ValidString(errorBody(long)))
+	assert.Equal(t, "<binary>", errorBody("\xff\xfe"))
 }
 
 func TestMakeRequestDialTimeout(t *testing.T) {
