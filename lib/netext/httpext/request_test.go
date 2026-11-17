@@ -655,3 +655,12 @@ func TestMakeRequestRPSLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestResponseErrorMetadataMasksURLCredentials(t *testing.T) {
+	t.Parallel()
+	m := ResponseErrorMetadata(nil, &Response{
+		Status: 200, StatusText: "200 OK", Proto: "HTTP/1.1",
+		Request: &Request{Method: http.MethodGet, URL: "https://bob:hunter2@example.com/x"},
+	})
+	assert.Equal(t, "GET https://****:****@example.com/x HTTP/1.1", m[MetadataErrorReqHeaders])
+}

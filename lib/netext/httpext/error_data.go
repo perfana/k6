@@ -3,6 +3,7 @@ package httpext
 import (
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 )
@@ -68,7 +69,7 @@ func ResponseErrorMetadata(meta map[string]string, res *Response) map[string]str
 		if proto == "" {
 			proto = "HTTP/1.1"
 		}
-		m[MetadataErrorReqHeaders] = req.Method + " " + req.URL + " " + proto + formatHeader(req.Headers)
+		m[MetadataErrorReqHeaders] = req.Method + " " + cleanRequestURL(req.URL) + " " + proto + formatHeader(req.Headers)
 		if req.Body != "" {
 			m[MetadataErrorReqBody] = errorBody(req.Body)
 		}
@@ -84,6 +85,16 @@ func ResponseErrorMetadata(meta map[string]string, res *Response) map[string]str
 		m[MetadataErrorResBody] = errorBody(body)
 	}
 	return m
+}
+
+// cleanRequestURL masks credentials in raw the way the transport masks the URL of a
+// failed request: Request.URL is the raw URL, user:password included.
+func cleanRequestURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return URL{u: u, URL: raw}.Clean()
 }
 
 // formatHeader renders h as newline-prefixed "Name: value" lines, sorted by name.
