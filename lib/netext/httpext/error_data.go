@@ -87,14 +87,23 @@ func ResponseErrorMetadata(meta map[string]string, res *Response) map[string]str
 	return m
 }
 
-// cleanRequestURL masks credentials in raw the way the transport masks the URL of a
-// failed request: Request.URL is the raw URL, user:password included.
+// cleanRequestURL masks credentials in raw, which is the raw request URL,
+// user:password included. It rebuilds the URL rather than splicing by length as
+// URL.Clean does, which miscounts percent-encoded credentials.
 func cleanRequestURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
+		return "[unparseable url]"
+	}
+	if u.User == nil {
 		return raw
 	}
-	return URL{u: u, URL: raw}.Clean()
+	mask := "****@"
+	if _, ok := u.User.Password(); ok {
+		mask = "****:****@"
+	}
+	u.User = nil // url.String would escape a mask set here
+	return strings.Replace(u.String(), "//", "//"+mask, 1)
 }
 
 // formatHeader renders h as newline-prefixed "Name: value" lines, sorted by name.

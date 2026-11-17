@@ -664,3 +664,16 @@ func TestResponseErrorMetadataMasksURLCredentials(t *testing.T) {
 	})
 	assert.Equal(t, "GET https://****:****@example.com/x HTTP/1.1", m[MetadataErrorReqHeaders])
 }
+
+func TestResponseErrorMetadataMasksEncodedURLCredentials(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]string{
+		"https://bob:p%40ss%3Aw0rd@example.com/x": "https://****:****@example.com/x",
+		"https://b%40b@example.com/x":             "https://****@example.com/x",
+		"https://bob:@example.com/x":              "https://****:****@example.com/x",
+		"https://example.com/x?a=1":               "https://example.com/x?a=1",
+	} {
+		m := ResponseErrorMetadata(nil, &Response{Request: &Request{Method: http.MethodGet, URL: raw}})
+		assert.Equal(t, "GET "+want+" HTTP/1.1", m[MetadataErrorReqHeaders], raw)
+	}
+}
