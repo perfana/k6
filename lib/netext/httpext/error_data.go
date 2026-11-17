@@ -53,6 +53,39 @@ func errorMetadata(
 	return m
 }
 
+// ResponseErrorMetadata returns a copy of meta extended with the request and response
+// in res, under the same keys and in the same layout as errorMetadata. It serves a
+// failed check on a response the transport saw as successful, so the http_req_failed
+// sample carried no detail. Bodies are what the script kept: none with
+// discardResponseBodies or responseType "none".
+func ResponseErrorMetadata(meta map[string]string, res *Response) map[string]string {
+	m := maps.Clone(meta)
+	if m == nil {
+		m = make(map[string]string, 4)
+	}
+	if req := res.Request; req != nil {
+		proto := res.Proto
+		if proto == "" {
+			proto = "HTTP/1.1"
+		}
+		m[MetadataErrorReqHeaders] = req.Method + " " + req.URL + " " + proto + formatHeader(req.Headers)
+		if req.Body != "" {
+			m[MetadataErrorReqBody] = errorBody(req.Body)
+		}
+	}
+	if res.Status != 0 {
+		h := make(http.Header, len(res.Headers))
+		for k, v := range res.Headers {
+			h[k] = []string{v}
+		}
+		m[MetadataErrorResHeaders] = res.Proto + " " + res.StatusText + formatHeader(h)
+	}
+	if body := responseBodyString(res.Body); body != "" {
+		m[MetadataErrorResBody] = errorBody(body)
+	}
+	return m
+}
+
 // formatHeader renders h as newline-prefixed "Name: value" lines, sorted by name.
 func formatHeader(h http.Header) string {
 	h = h.Clone()

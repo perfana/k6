@@ -35,6 +35,7 @@ import (
 	"go.k6.io/k6/v2/internal/lib/testutils/httpmultibin"
 	"go.k6.io/k6/v2/js/modules"
 	"go.k6.io/k6/v2/lib/fsext"
+	"go.k6.io/k6/v2/lib/netext/httpext"
 )
 
 func TestVersion(t *testing.T) {
@@ -3532,4 +3533,66 @@ func TestPLZCloudSecretsEnvVars(t *testing.T) {
 	assert.NotContains(t, stderr, "level=error")
 	assert.Contains(t, stderr, `level=info msg="***SECRET_REDACTED***" source=console`)
 	assert.NotContains(t, stderr, "plz-secret-value")
+}
+
+// A response the transport counts as a success can still fail a check. With
+// httpErrorData on, the failed check sample carries that response, so an output
+// can show what the check rejected; a passing check and a non-response stay lean.
+func TestRunFailedCheckErrorData(t *testing.T) {
+	t.Parallel()
+
+	tb := httpmultibin.NewHTTPMultiBin(t)
+	script := tb.Replacer.Replace(`
+		import http from 'k6/http';
+		import { check } from 'k6';
+
+		export const options = {
+			httpErrorData: true,
+			hosts: { 'HTTPBIN_DOMAIN': 'HTTPBIN_IP' },
+		};
+
+		export default function() {
+			const res = http.post('HTTPBIN_URL/anything', 'payload', { headers: { Authorization: 'Bearer secret' } });
+			check(res, {
+				'passes': (r) => r.status === 200,
+				'body too short': (r) => r.body.length < 5,
+			});
+			check(42, { 'not a response': () => false });
+		}
+	`)
+
+	ts := getSingleFileTestState(t, script, []string{"--out", "json=results.json"}, 0)
+	cmd.ExecuteWithGlobalState(ts.GlobalState)
+
+	jsonResults, err := fsext.ReadFile(ts.FS, "results.json")
+	require.NoError(t, err)
+
+	meta := map[string]map[string]any{}
+	for line := range bytes.SplitSeq(jsonResults, []byte("\n")) {
+		var s struct {
+			Metric string
+			Data   struct {
+				Tags     map[string]string
+				Metadata map[string]any
+			}
+		}
+		if len(line) == 0 || json.Unmarshal(line, &s) != nil || s.Metric != "checks" {
+			continue
+		}
+		meta[s.Data.Tags["check"]] = s.Data.Metadata
+	}
+
+	failed := meta["body too short"]
+	require.NotNil(t, failed)
+	reqHeaders, _ := failed[httpext.MetadataErrorReqHeaders].(string)
+	assert.True(t, strings.HasPrefix(reqHeaders, "POST "+tb.Replacer.Replace("HTTPBIN_URL/anything")+" HTTP/1.1\n"), reqHeaders)
+	assert.Contains(t, reqHeaders, "Authorization: [redacted]")
+	assert.Equal(t, "payload", failed[httpext.MetadataErrorReqBody])
+	resHeaders, _ := failed[httpext.MetadataErrorResHeaders].(string)
+	assert.True(t, strings.HasPrefix(resHeaders, "HTTP/1.1 200 OK\n"), resHeaders)
+	assert.Contains(t, failed[httpext.MetadataErrorResBody], `"method": "POST"`)
+
+	for _, name := range []string{"passes", "not a response"} {
+		assert.NotContains(t, meta[name], httpext.MetadataErrorReqHeaders, name)
+	}
 }

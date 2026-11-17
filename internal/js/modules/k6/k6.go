@@ -11,7 +11,9 @@ import (
 
 	"go.k6.io/k6/v2/js/common"
 	"go.k6.io/k6/v2/js/modules"
+	k6http "go.k6.io/k6/v2/js/modules/k6/http"
 	"go.k6.io/k6/v2/lib"
+	"go.k6.io/k6/v2/lib/netext/httpext"
 	"go.k6.io/k6/v2/metrics"
 )
 
@@ -210,6 +212,10 @@ func (mi *K6) Check(arg0, checks sobek.Value, extras ...sobek.Value) (bool, erro
 		}
 		if booleanVal {
 			sample.Value = 1
+		} else if res := httpResponse(arg0); res != nil && state.Options.HTTPErrorData.Bool {
+			// A response can pass the transport and still fail its checks; this is
+			// the only place that knows which response a failed check examined.
+			sample.Metadata = httpext.ResponseErrorMetadata(commonTagsAndMeta.Metadata, res)
 		}
 
 		metrics.PushIfNotDone(ctx, state.Samples, sample)
@@ -220,4 +226,15 @@ func (mi *K6) Check(arg0, checks sobek.Value, extras ...sobek.Value) (bool, erro
 	}
 
 	return succ, nil
+}
+
+// httpResponse returns the HTTP response v wraps, or nil when v is anything else.
+func httpResponse(v sobek.Value) *httpext.Response {
+	if common.IsNullish(v) {
+		return nil
+	}
+	if r, ok := v.Export().(*k6http.Response); ok {
+		return r.Response
+	}
+	return nil
 }
